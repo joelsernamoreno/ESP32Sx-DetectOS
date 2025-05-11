@@ -18,7 +18,8 @@ enum HostOS {
   OS_UNKNOWN,
   OS_WINDOWS,
   OS_LINUX,
-  OS_MACOS
+  OS_MACOS,
+  OS_IOS
 };
 
 HostOS detected_os = OS_UNKNOWN;
@@ -73,25 +74,52 @@ void detectHostOS() {
 
   led_event_count = 0;
   led_response_received = false;
+  caps_status = 0;
+  num_status = 0;
+  scroll_status = 0;
+
   toggleKey(KEY_CAPS_LOCK);
   delay(800);
 
   if (!led_response_received) {
-    SerialUSB.println("No LED response to CAPSLOCK");
+    if (caps_status) {
+      detected_os = OS_IOS;
+      SerialUSB.println("iOS detected (CapsLock active without event)");
+      return;
+    }
+    
     toggleKey(KEY_CAPS_LOCK);
     delay(800);
-
+    
     if (!led_response_received) {
-      SerialUSB.println("Still no response. Predicting macOS");
-      detected_os = OS_MACOS;
-      SerialUSB.println("Prediction: macOS");
+      if (caps_status) {
+        detected_os = OS_IOS;
+        SerialUSB.println("iOS detected (CapsLock active after retry)");
+      } else {
+        detected_os = OS_MACOS;
+        SerialUSB.println("macOS detected (no LED response)");
+      }
       return;
     }
   }
 
-  SerialUSB.println("Received LED response to CAPSLOCK");
+  bool windows_detected = false;
+  if (led_event_count >= 1) {
+    toggleKey(KEY_NUM_LOCK);
+    delay(800);
+    toggleKey(KEY_SCROLL_LOCK);
+    delay(800);
+    
+    if (led_event_count >= 3) {
+      windows_detected = true;
+    }
+  }
 
-  bool caps_on_initial = caps_status;
+  if (windows_detected) {
+    detected_os = OS_WINDOWS;
+    SerialUSB.println("Windows detected (multiple LED responses)");
+    return;
+  }
 
   led_response_received = false;
   toggleKey(KEY_NUM_LOCK);
@@ -103,19 +131,15 @@ void detectHostOS() {
   delay(800);
   bool scroll_response = led_response_received;
 
-  SerialUSB.printf("Event count: %d\n", led_event_count);
-
-  if (led_event_count >= 3) {
-    detected_os = OS_WINDOWS;
-    SerialUSB.println("Prediction: Windows (multiple LED events)");
-  }
-  else if (caps_on_initial && (!num_response || !scroll_response)) {
+  if (num_response || scroll_response) {
     detected_os = OS_LINUX;
-    SerialUSB.println("Prediction: Linux (partial LED response)");
-  }
-  else {
+    SerialUSB.println("Linux detected (partial LED response)");
+  } else if (caps_status) {
+    detected_os = OS_IOS;
+    SerialUSB.println("iOS detected (only CapsLock active)");
+  } else {
     detected_os = OS_UNKNOWN;
-    SerialUSB.println("Prediction: Unknown OS");
+    SerialUSB.println("OS detection failed");
   }
 }
 
@@ -123,14 +147,11 @@ void setup() {
   USB.onEvent(usbEventCallback);
   Keyboard.onEvent(usbEventCallback);
   SerialUSB.onEvent(usbEventCallback);
-
   USB.begin();
   Keyboard.begin();
   SerialUSB.begin();
-
   delay(2000);
   SerialUSB.println("=== USB HID OS Detector ===");
-
   resetKeyboardLEDs();
   detectHostOS();
   resetKeyboardLEDs();
@@ -149,6 +170,10 @@ void loop() {
     case OS_MACOS:
       SerialUSB.println("Detected: macOS");
       Keyboard.println("macOS detected");
+      break;
+    case OS_IOS:
+      SerialUSB.println("Detected: iOS");
+      Keyboard.println("iOS detected");
       break;
     default:
       SerialUSB.println("OS Unknown");

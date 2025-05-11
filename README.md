@@ -13,6 +13,7 @@ Tested systems:
 
 * Ubuntu 22.04 (Linux detected)
 * Windows 11 (Windows detected)
+* iPhone 15 Pro Max with iOS 18.4 (iOS detected)
 
 **NOTE:** It has not been tested on macOS.
 
