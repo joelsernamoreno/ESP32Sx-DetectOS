@@ -2,7 +2,7 @@
 
 **Idea, development and implementation:** Joel Serna (@JoelSernaMoreno).
 
-Simple USB OS detector for ESP32-S2 and ESP32-S3 (BETA).
+Simple USB OS detector for ESP32-S2 and ESP32-S3.
 
 Requirements:
 
@@ -13,12 +13,11 @@ Tested systems:
 
 * Ubuntu 22.04 (Linux detected)
 * Windows 11 (Windows detected)
-* iPhone 15 Pro Max with iOS 18.4 (iOS detected)
+* Samsung Galaxy S24 Ultra (Android detected)
+* iPhone 15 Pro Max (iOS detected)
 
-**NOTE:** It has not been tested on macOS.
+**NOTE:** macOS has not been tested.
 
-You can send a PR if you manage to detect other systems.
-
-![Windows](https://github.com/joelsernamoreno/ESP32Sx-DetectOS/blob/main/images/windows.jpg)
+Feel free to submit a pull request if you manage to detect additional systems.
 
 ![Linux](https://github.com/joelsernamoreno/ESP32Sx-DetectOS/blob/main/images/linux.png)
