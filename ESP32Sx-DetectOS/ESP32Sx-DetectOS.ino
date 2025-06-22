@@ -1,19 +1,18 @@
 #include <USB.h>
 #include <USBHIDKeyboard.h>
 
-#define KEY_NUM_LOCK     0xDB
-#define KEY_CAPS_LOCK    0xC1
-#define KEY_SCROLL_LOCK  0xCF
-
 USBHIDKeyboard Keyboard;
-USBCDC SerialUSB;
+USBCDC USBSerial;
 
+String os;
 volatile bool led_response_received = false;
-volatile uint8_t caps_status = 0;
-volatile uint8_t num_status = 0;
-volatile uint8_t scroll_status = 0;
 volatile int led_event_count = 0;
 volatile unsigned long led_event_time = 0;
+volatile bool caps_status = false;
+volatile bool num_status = false;
+volatile bool scroll_status = false;
+volatile bool numlock_checked = false;
+volatile bool os_detection_complete = false;
 unsigned long caps_sent_time = 0;
 unsigned long num_sent_time = 0;
 unsigned long scroll_sent_time = 0;
@@ -32,14 +31,19 @@ enum HostOS {
 
 HostOS detected_os = OS_UNKNOWN;
 
-void usbEventCallback(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data) {
+void usbEventCallback(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
   if (event_base == ARDUINO_USB_HID_KEYBOARD_EVENTS) {
-    arduino_usb_hid_keyboard_event_data_t* data = (arduino_usb_hid_keyboard_event_data_t*)event_data;
+    arduino_usb_hid_keyboard_event_data_t *data = (arduino_usb_hid_keyboard_event_data_t *)event_data;
 
     if (event_id == ARDUINO_USB_HID_KEYBOARD_LED_EVENT) {
       led_response_received = true;
       led_event_count++;
       led_event_time = millis();
+
+      caps_status = data->capslock != 0;
+      num_status = data->numlock != 0;
+      scroll_status = data->scrolllock != 0;
+      numlock_checked = true;
 
       if (caps_sent_time > 0 && caps_delay == 0)
         caps_delay = led_event_time - caps_sent_time;
@@ -47,18 +51,11 @@ void usbEventCallback(void* arg, esp_event_base_t event_base, int32_t event_id, 
         num_delay = led_event_time - num_sent_time;
       if (scroll_sent_time > 0 && scroll_delay == 0)
         scroll_delay = led_event_time - scroll_sent_time;
-
-      caps_status = data->capslock;
-      num_status = data->numlock;
-      scroll_status = data->scrolllock;
-
-      SerialUSB.printf("LED event %d: Caps:%u Num:%u Scroll:%u (Delay: %lums)\n",
-                     led_event_count, caps_status, num_status, scroll_status, led_event_time);
     }
   }
 }
 
-void toggleKey(uint8_t key, unsigned long* send_time) {
+void toggleKey(uint8_t key, unsigned long *send_time) {
   *send_time = millis();
   led_response_received = false;
 
@@ -69,117 +66,110 @@ void toggleKey(uint8_t key, unsigned long* send_time) {
 }
 
 void resetKeyboardLEDs() {
-  SerialUSB.println("Resetting keyboard LEDs...");
-  
   unsigned long temp_time;
-  if (caps_status) toggleKey(KEY_CAPS_LOCK, &temp_time);
-  if (num_status) toggleKey(KEY_NUM_LOCK, &temp_time);
-  if (scroll_status) toggleKey(KEY_SCROLL_LOCK, &temp_time);
-  
-  SerialUSB.printf("LEDs after reset: Caps:%u Num:%u Scroll:%u\n",
-                  caps_status, num_status, scroll_status);
+  delay(500);
+  if (caps_status) {
+    toggleKey(KEY_CAPS_LOCK, &temp_time);
+    delay(800);
+  }
+  if (num_status) {
+    toggleKey(KEY_NUM_LOCK, &temp_time);
+    delay(800);
+  }
+  if (scroll_status) {
+    toggleKey(KEY_SCROLL_LOCK, &temp_time);
+    delay(800);
+  }
 }
 
 void detectHostOS() {
-  SerialUSB.println("=== Starting OS detection ===");
   led_event_count = 0;
   caps_status = num_status = scroll_status = 0;
   caps_delay = num_delay = scroll_delay = 0;
   caps_sent_time = num_sent_time = scroll_sent_time = 0;
   led_response_received = false;
-
-  // Test Caps Lock (iOS detection)
   uint8_t initial_caps = caps_status;
   toggleKey(KEY_CAPS_LOCK, &caps_sent_time);
-  delay(1200); // Increased delay for iOS
-  
-  // Special iOS check - Caps Lock changes but no LED event
+  delay(1500);
+
   if (!led_response_received && caps_status != initial_caps) {
     detected_os = OS_IOS;
-    SerialUSB.println("iOS detected (CapsLock changed without LED event)");
     return;
   }
 
-  // Test Num Lock
   toggleKey(KEY_NUM_LOCK, &num_sent_time);
-  delay(800);
-
-  // Test Scroll Lock
+  delay(1200);
   toggleKey(KEY_SCROLL_LOCK, &scroll_sent_time);
-  delay(800);
+  delay(1200);
 
-  // Enhanced decision logic
   if (led_event_count == 0) {
-    if (caps_status != initial_caps) {
-      detected_os = OS_IOS;
-      SerialUSB.println("iOS detected (no LED events but CapsLock changed)");
-    } else {
-      detected_os = OS_MACOS;
-      SerialUSB.println("macOS detected (no response)");
-    }
-  }
-  else if (caps_delay > 200 || num_delay > 200 || scroll_delay > 200) {
-    detected_os = OS_ANDROID;
-    SerialUSB.println("Android detected (delayed responses)");
-  }
-  else if (led_event_count >= 3 && caps_delay < 100 && num_delay < 100 && scroll_delay < 100) {
+    detected_os = (caps_status != initial_caps) ? OS_IOS : OS_MACOS;
+  } else if (led_event_count >= 3 && caps_delay < 100 && num_delay < 100 && scroll_delay < 100) {
     detected_os = OS_WINDOWS;
-    SerialUSB.println("Windows detected (fast responses)");
-  }
-  else {
-    if (num_status || scroll_status) {
+  } else {
+    bool has_numlock_response = (num_delay > 0);
+    bool has_scrolllock_response = (scroll_delay > 0);
+
+    if (num_status && !scroll_status && has_numlock_response && !has_scrolllock_response) {
       detected_os = OS_LINUX;
-      SerialUSB.println("Linux detected (partial LED responses)");
+    } else if ((caps_delay > 200 || num_delay > 200 || scroll_delay > 200) && (has_numlock_response || has_scrolllock_response)) {
+      detected_os = OS_ANDROID;
     } else if (caps_status != initial_caps) {
       detected_os = OS_IOS;
-      SerialUSB.println("iOS detected (only CapsLock changed)");
     } else {
       detected_os = OS_UNKNOWN;
-      SerialUSB.println("OS detection failed");
     }
   }
+}
+
+void printDetectedOS() {
+  switch (detected_os) {
+    case OS_WINDOWS:
+      os = "Windows";
+      Keyboard.println("Windows");
+      break;
+    case OS_LINUX:
+      os = "Linux";
+      Keyboard.println("Linux");
+      break;
+    case OS_MACOS:
+      os = "macOS";
+      Keyboard.println("macOS");
+      break;
+    case OS_IOS:
+      os = "iOS";
+      Keyboard.println("iOS");
+      break;
+    case OS_ANDROID:
+      os = "Android";
+      Keyboard.println("Android");
+      break;
+    default:
+      os = "OS Unknown";
+      Keyboard.println("OS Unknown");
+      break;
+  }
+  os_detection_complete = true;
+}
+
+void onDetectOSRequested() {
+  resetKeyboardLEDs();
+  detectHostOS();
+  resetKeyboardLEDs();
+  printDetectedOS();
 }
 
 void setup() {
   USB.onEvent(usbEventCallback);
   Keyboard.onEvent(usbEventCallback);
-  SerialUSB.onEvent(usbEventCallback);
+  USBSerial.onEvent(usbEventCallback);
   USB.begin();
   Keyboard.begin();
-  SerialUSB.begin();
+  USBSerial.begin();
   delay(2000);
-  SerialUSB.println("=== USB HID OS Detector ===");
-  resetKeyboardLEDs();
-  detectHostOS();
-  resetKeyboardLEDs();
+  USBSerial.println("=== USB HID OS Detector ===");
+  onDetectOSRequested();
 }
 
 void loop() {
-  switch (detected_os) {
-    case OS_WINDOWS:
-      SerialUSB.println("Windows detected");
-      Keyboard.println("Windows detected");
-      break;
-    case OS_LINUX:
-      SerialUSB.println("Linux detected");
-      Keyboard.println("Linux detected");
-      break;
-    case OS_MACOS:
-      SerialUSB.println("macOS detected");
-      Keyboard.println("macOS detected");
-      break;
-    case OS_IOS:
-      SerialUSB.println("iOS detected");
-      Keyboard.println("iOS detected");
-      break;
-    case OS_ANDROID:
-      SerialUSB.println("Android detected");
-      Keyboard.println("Android detected");
-      break;
-    default:
-      SerialUSB.println("OS Unknown");
-      Keyboard.println("OS Unknown");
-      break;
-  }
-  delay(5000);
 }
