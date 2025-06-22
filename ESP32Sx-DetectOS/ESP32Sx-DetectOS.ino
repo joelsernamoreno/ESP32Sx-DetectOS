@@ -26,7 +26,8 @@ enum HostOS {
   OS_LINUX,
   OS_MACOS,
   OS_IOS,
-  OS_ANDROID
+  OS_ANDROID,
+  OS_CHROMEOS
 };
 
 HostOS detected_os = OS_UNKNOWN;
@@ -89,35 +90,97 @@ void detectHostOS() {
   caps_sent_time = num_sent_time = scroll_sent_time = 0;
   led_response_received = false;
   uint8_t initial_caps = caps_status;
+
+  Keyboard.println("=== USB HID OS Detector ===");
+  Keyboard.println("[DEBUG] Starting OS detection...");
+
+  // CAPS LOCK
+  Keyboard.println("[DEBUG] Testing Caps Lock...");
   toggleKey(KEY_CAPS_LOCK, &caps_sent_time);
   delay(1500);
+  Keyboard.print("[DEBUG] CAPS LOCK - RESPONSE: ");
+  Keyboard.println(led_response_received ? "YES" : "NO");
+  Keyboard.print("[DEBUG] CAPS STATUS: ");
+  Keyboard.println(caps_status);
+  Keyboard.print("[DEBUG] INITIAL CAPS: ");
+  Keyboard.println(initial_caps);
+  Keyboard.print("[DEBUG] CAPS DELAY: ");
+  Keyboard.println(caps_delay);
 
+  // iOS early detection
   if (!led_response_received && caps_status != initial_caps) {
+    Keyboard.println("[DEBUG] FINAL DECISION: iOS (EARLY DETECTION)");
     detected_os = OS_IOS;
     return;
   }
 
+  // NUM LOCK
+  Keyboard.println("[DEBUG] Testing Num Lock...");
   toggleKey(KEY_NUM_LOCK, &num_sent_time);
   delay(1200);
+  Keyboard.print("[DEBUG] NUM LOCK - RESPONSE: ");
+  Keyboard.println(num_delay > 0 ? "YES" : "NO");
+  Keyboard.print("[DEBUG] NUM STATUS: ");
+  Keyboard.println(num_status);
+  Keyboard.print("[DEBUG] NUM DELAY: ");
+  Keyboard.println(num_delay);
+
+  // SCROLL LOCK
+  Keyboard.println("[DEBUG] Testing Scroll Lock...");
   toggleKey(KEY_SCROLL_LOCK, &scroll_sent_time);
   delay(1200);
+  Keyboard.print("[DEBUG] SCROLL LOCK - RESPONSE: ");
+  Keyboard.println(scroll_delay > 0 ? "YES" : "NO");
+  Keyboard.print("[DEBUG] SCROLL STATUS: ");
+  Keyboard.println(scroll_status);
+  Keyboard.print("[DEBUG] SCROLL DELAY: ");
+  Keyboard.println(scroll_delay);
+
+  Keyboard.print("[DEBUG] LED EVENTS DETECTED: ");
+  Keyboard.println(led_event_count);
 
   if (led_event_count == 0) {
     detected_os = (caps_status != initial_caps) ? OS_IOS : OS_MACOS;
-  } else if (led_event_count >= 3 && caps_delay < 100 && num_delay < 100 && scroll_delay < 100) {
+    Keyboard.print("[DEBUG] FINAL DECISION: ");
+    Keyboard.println(detected_os == OS_IOS ? "iOS" : "macOS");
+  }
+  else if (led_event_count >= 3 && caps_delay < 100 && num_delay < 100 && scroll_delay < 100) {
     detected_os = OS_WINDOWS;
-  } else {
+    Keyboard.println("[DEBUG] FINAL DECISION: Windows");
+  }
+  else {
     bool has_numlock_response = (num_delay > 0);
     bool has_scrolllock_response = (scroll_delay > 0);
 
-    if (num_status && !scroll_status && has_numlock_response && !has_scrolllock_response) {
+    // ChromeOS detection
+    if (led_event_count == 1 &&
+        caps_status != initial_caps &&
+        caps_delay > 0 && caps_delay < 20 &&
+        !has_numlock_response && !has_scrolllock_response) {
+      detected_os = OS_CHROMEOS;
+      Keyboard.println("[DEBUG] FINAL DECISION: ChromeOS");
+    }
+    // Linux detection
+    else if (num_status && !scroll_status &&
+             has_numlock_response && !has_scrolllock_response) {
       detected_os = OS_LINUX;
-    } else if ((caps_delay > 200 || num_delay > 200 || scroll_delay > 200) && (has_numlock_response || has_scrolllock_response)) {
+      Keyboard.println("[DEBUG] FINAL DECISION: Linux");
+    }
+    // Android detection
+    else if ((caps_delay > 200 || num_delay > 200 || scroll_delay > 200) &&
+             (has_numlock_response || has_scrolllock_response)) {
       detected_os = OS_ANDROID;
-    } else if (caps_status != initial_caps) {
+      Keyboard.println("[DEBUG] FINAL DECISION: Android");
+    }
+    // Fallback to iOS
+    else if (caps_status != initial_caps) {
       detected_os = OS_IOS;
-    } else {
+      Keyboard.println("[DEBUG] FINAL DECISION: iOS (FALLBACK)");
+    }
+    // Unknown
+    else {
       detected_os = OS_UNKNOWN;
+      Keyboard.println("[DEBUG] FINAL DECISION: Unknown OS");
     }
   }
 }
@@ -143,6 +206,10 @@ void printDetectedOS() {
     case OS_ANDROID:
       os = "Android";
       Keyboard.println("Android");
+      break;
+    case OS_CHROMEOS:
+      os = "ChromeOS";
+      Keyboard.println("chromeOS");
       break;
     default:
       os = "OS Unknown";
